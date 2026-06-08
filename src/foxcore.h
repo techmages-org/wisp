@@ -69,6 +69,30 @@ static void addProbe(const uint8_t* mac, const char* ssid, int8_t rssi, uint8_t 
   pr.rssi = rssi; pr.ch = ch; pr.lastMs = millis();
 }
 
+// --- CLIENTS tool: stations associated to a chosen AP -----------------------
+// Park on the AP's channel and read DATA frames: a frame TO the AP (ToDS) names
+// the client as addr2 (transmitter); a frame FROM the AP (FromDS) names the
+// client as addr1 (receiver). Either way we learn a real associated station.
+struct Sta { uint8_t mac[6]; int8_t rssi; uint8_t ch; uint32_t lastMs; };  // associated station (Arduino reserves `Client`)
+static const int MAX_CLIENT = 48;
+static Sta     clients[MAX_CLIENT];
+static int     clientCount = 0;
+static bool    clientCapturing = false;
+static uint8_t clientBssid[6];
+static uint8_t clientCh = 1;
+
+static void addClient(const uint8_t* mac, int8_t rssi) {
+  for (int i = 0; i < clientCount; i++)
+    if (memcmp(clients[i].mac, mac, 6) == 0) {
+      clients[i].rssi = rssi; clients[i].lastMs = millis();
+      return;
+    }
+  if (clientCount >= MAX_CLIENT) return;
+  Sta& c = clients[clientCount++];
+  memcpy(c.mac, mac, 6);
+  c.rssi = rssi; c.ch = clientCh; c.lastMs = millis();
+}
+
 // Promiscuous rx callback. HUNT: keep frames TRANSMITTED BY the target (addr2 ==
 // target MAC) for its RSSI. PROBES: parse probe-request frames (mgmt subtype 0x40)
 // for the device MAC + the SSID it's searching for.
@@ -87,6 +111,20 @@ static void snifferCb(void* buf, wifi_promiscuous_pkt_type_t type) {
         ssid[len] = 0;
       }
       addProbe(pl + 10, ssid[0] ? ssid : "(any)", p->rx_ctrl.rssi, hopCh);
+    }
+    return;
+  }
+  if (clientCapturing) {
+    if ((pl[0] & 0x0C) == 0x08) {           // data frame (type == 2)
+      bool toDS   = pl[1] & 0x01;
+      bool fromDS = pl[1] & 0x02;
+      const uint8_t* a1 = pl + 4;           // addr1
+      const uint8_t* a2 = pl + 10;          // addr2
+      const uint8_t* cli = nullptr;
+      if (toDS && !fromDS && memcmp(a1, clientBssid, 6) == 0) cli = a2;       // client -> AP
+      else if (!toDS && fromDS && memcmp(a2, clientBssid, 6) == 0) cli = a1;  // AP -> client
+      if (cli && !(cli[0] & 0x01) && memcmp(cli, clientBssid, 6) != 0)        // skip mcast + the AP itself
+        addClient(cli, p->rx_ctrl.rssi);
     }
     return;
   }
@@ -202,6 +240,38 @@ static void lockProbe(int idx) {
   targetCh = probes[idx].ch ? probes[idx].ch : 1;
   strncpy(targetName, macStr(probes[idx].mac), sizeof(targetName));
   stopProbes();
+  startSniffer();
+  mode = LOCKED;
+}
+
+// --- CLIENTS lifecycle ------------------------------------------------------
+// Park on the AP's channel (clients of an AP talk on its channel — no hopping)
+// and enumerate stations. Same radio-start order as startSniffer (do NOT call
+// WiFi.disconnect(true), which would stop the radio and kill promiscuous).
+static void startClients(const uint8_t* bssid, uint8_t ch) {
+  esp_wifi_set_promiscuous(false);
+  WiFi.mode(WIFI_STA);
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_promiscuous_rx_cb(snifferCb);
+  memcpy(clientBssid, bssid, 6);
+  clientCh = ch ? ch : 1;
+  clientCount = 0;
+  clientCapturing = true;
+  esp_wifi_set_channel(clientCh, WIFI_SECOND_CHAN_NONE);
+}
+
+static void stopClients() {
+  esp_wifi_set_promiscuous(false);
+  clientCapturing = false;
+}
+
+// Lock a captured station → fox-hunt that device on the AP's channel.
+static void lockClient(int idx) {
+  if (idx < 0 || idx >= clientCount) return;
+  memcpy(targetMac, clients[idx].mac, 6);
+  targetCh = clientCh;
+  strncpy(targetName, macStr(clients[idx].mac), sizeof(targetName));
+  stopClients();
   startSniffer();
   mode = LOCKED;
 }

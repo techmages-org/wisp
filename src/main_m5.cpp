@@ -36,11 +36,15 @@ static bool muted = false;
 static uint32_t lastTickMs = 0;
 static int SCRW = 240, SCRH = 135;
 
-// Top-level tool: the AP/device fox-hunt, or the probe-request sniffer. PWR
-// toggles between them. PROBES is orthogonal to the HUNT mode machine.
-enum Tool { T_HUNT, T_PROBES };
+// Top-level tool: the AP/device fox-hunt, the probe-request sniffer, or the
+// associated-client list for a chosen AP. PWR cycles HUNT<->PROBES; hold-B on
+// an AP in the picker drills into that AP's CLIENTS. Both are orthogonal to the
+// HUNT mode machine and return early before the PICKING/LOCKED handlers.
+enum Tool { T_HUNT, T_PROBES, T_CLIENTS };
 static Tool tool = T_HUNT;
 static int  probeSel = 0;
+static int  clientSel = 0;
+static char clientApName[33] = "";
 static uint32_t lastHop = 0;
 
 static void tick(int freq, int dur) { if (!muted) tone(BUZZER_PIN, freq, dur); }
@@ -57,7 +61,7 @@ static void drawPicker() {
   d.setTextColor(C_VIOLET, C_BG);
   d.setCursor(4, 2); d.print("Wisp  pick a target");
   d.setTextColor(C_DIM, C_BG);
-  d.setCursor(4, SCRH - 9); d.print("A next  B lock  holdA scan  PWR probe");
+  d.setCursor(4, SCRH - 9); d.print("A next B hunt Bhold clients PWR probe");
   if (apCount == 0) {
     d.setTextColor(C_AMBER, C_BG);
     d.setCursor(4, 60); d.print("no APs - hold A to rescan");
@@ -112,6 +116,41 @@ static void drawProbes() {
              pr.mac[3], pr.mac[4], pr.mac[5], pr.ssid);
     d.setTextColor(col, on ? C_SEL : C_BG);
     char r[6]; snprintf(r, sizeof(r), "%d", pr.rssi);
+    int w = d.textWidth(r);
+    d.setCursor(SCRW - w - 4, y); d.print(r);
+  }
+}
+
+// CLIENTS list: stations associated to the AP you picked, by MAC + signal. Lock
+// one (B) to fox-hunt that station. Stays parked on the AP's channel (no hop).
+static void drawClients() {
+  auto &d = M5.Display;
+  d.fillScreen(C_BG);
+  d.setTextSize(1);
+  d.setTextColor(C_VIOLET, C_BG);
+  d.setCursor(4, 2);
+  d.printf("%.10s ch%-2d  %d sta", clientApName[0] ? clientApName : "AP", clientCh, clientCount);
+  d.setTextColor(C_DIM, C_BG);
+  d.setCursor(4, SCRH - 9); d.print("A next  B hunt  holdA back");
+  if (clientCount == 0) {
+    d.setTextColor(C_AMBER, C_BG);
+    d.setCursor(4, 60); d.print("waiting for client traffic...");
+    return;
+  }
+  const int rows = 9, top = 15, rh = 12;
+  int start = constrain(clientSel - rows / 2, 0, max(0, clientCount - rows));
+  for (int i = 0; i < rows && start + i < clientCount; i++) {
+    int idx = start + i, y = top + i * rh;
+    bool on = (idx == clientSel);
+    Sta &c = clients[idx];
+    uint16_t col = c.rssi >= -60 ? C_MINT : c.rssi >= -75 ? C_AMBER : C_PINK;
+    if (on) { d.fillRect(0, y - 1, SCRW, rh, C_SEL); d.setTextColor(C_TEXT, C_SEL); }
+    else d.setTextColor(C_DIM, C_BG);
+    d.setCursor(2, y);
+    d.printf("%c%02X:%02X:%02X:%02X:%02X:%02X", on ? '>' : ' ',
+             c.mac[0], c.mac[1], c.mac[2], c.mac[3], c.mac[4], c.mac[5]);
+    d.setTextColor(col, on ? C_SEL : C_BG);
+    char r[6]; snprintf(r, sizeof(r), "%d", c.rssi);
     int w = d.textWidth(r);
     d.setCursor(SCRW - w - 4, y); d.print(r);
   }
@@ -211,20 +250,15 @@ void setup() {
 void loop() {
   M5.update();
 
-  // PWR toggles the top-level tool: AP/device fox-hunt <-> probe sniffer.
+  // PWR cycles the top-level tool: HUNT <-> PROBES. From CLIENTS it backs out to
+  // the HUNT picker. Tool-aware so it stops the right capture before switching.
   if (M5.BtnPWR.wasClicked()) {
     if (tool == T_HUNT) {
-      tool = T_PROBES;
-      startProbes();
-      probeSel = 0;
-      lastHop = millis();
-      drawProbes();
-    } else {
-      tool = T_HUNT;
-      stopProbes();
-      startSta();
-      doScan();
-      drawPicker();
+      tool = T_PROBES; startProbes(); probeSel = 0; lastHop = millis(); drawProbes();
+    } else if (tool == T_PROBES) {
+      stopProbes(); tool = T_HUNT; startSta(); doScan(); drawPicker();
+    } else { // T_CLIENTS
+      stopClients(); tool = T_HUNT; drawPicker();   // aps[] still populated — no rescan
     }
     return;
   }
@@ -247,9 +281,33 @@ void loop() {
     return;
   }
 
+  if (tool == T_CLIENTS) {
+    uint32_t now = millis();
+    if (M5.BtnA.wasClicked() && clientCount) clientSel = (clientSel + 1) % clientCount;
+    if (M5.BtnA.wasHold())    { stopClients(); tool = T_HUNT; drawPicker(); return; }
+    if (M5.BtnB.wasClicked() && clientCount > 0) {
+      lockClient(clientSel);    // -> mode == LOCKED on the chosen station
+      tool = T_HUNT;
+      lastFrame = 0;
+      drawMeter(-127, false);
+      return;
+    }
+    static uint32_t lastDraw = 0;
+    if (now - lastDraw > 200) { drawClients(); lastDraw = now; }
+    delay(8);
+    return;
+  }
+
   if (mode == PICKING) {
     if (M5.BtnA.wasClicked()) { sel = (sel + 1) % max(1, apCount); drawPicker(); }
     if (M5.BtnA.wasHold())    { doScan(); drawPicker(); }
+    if (M5.BtnB.wasHold() && apCount > 0) {   // drill into this AP's clients
+      strncpy(clientApName, aps[sel].ssid, sizeof(clientApName) - 1);
+      clientApName[sizeof(clientApName) - 1] = 0;
+      startClients(aps[sel].bssid, aps[sel].channel);
+      tool = T_CLIENTS; clientSel = 0; drawClients();
+      return;
+    }
     if (M5.BtnB.wasClicked() && apCount > 0) { lockSelection(); lastFrame = 0; drawMeter(-127, false); }
     delay(12);
     return;
