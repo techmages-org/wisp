@@ -167,4 +167,39 @@ static inline int trendDir() {
   return d >= 2 ? 1 : d <= -2 ? -1 : 0;
 }
 
+// --- PROBES lifecycle -------------------------------------------------------
+static void startProbes() {
+  esp_wifi_set_promiscuous(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true);
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_promiscuous_rx_cb(snifferCb);
+  probeCapturing = true;
+  probeCount = 0;
+  hopCh = 1;
+  esp_wifi_set_channel(hopCh, WIFI_SECOND_CHAN_NONE);
+}
+
+static void stopProbes() {
+  esp_wifi_set_promiscuous(false);
+  probeCapturing = false;
+}
+
+static void hopChannel() {
+  hopCh = (hopCh % 13) + 1;
+  esp_wifi_set_channel(hopCh, WIFI_SECOND_CHAN_NONE);
+}
+
+// Lock onto a captured device (the probing client) → switch to the HUNT meter on
+// it. Same fox-hunt, but the target is a phone/laptop instead of an AP.
+static void lockProbe(int idx) {
+  if (idx < 0 || idx >= probeCount) return;
+  memcpy(targetMac, probes[idx].mac, 6);
+  targetCh = probes[idx].ch ? probes[idx].ch : 1;
+  strncpy(targetName, macStr(probes[idx].mac), sizeof(targetName));
+  stopProbes();
+  startSniffer();
+  mode = LOCKED;
+}
+
 } // namespace fox

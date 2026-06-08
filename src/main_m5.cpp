@@ -36,6 +36,13 @@ static bool muted = false;
 static uint32_t lastTickMs = 0;
 static int SCRW = 240, SCRH = 135;
 
+// Top-level tool: the AP/device fox-hunt, or the probe-request sniffer. PWR
+// toggles between them. PROBES is orthogonal to the HUNT mode machine.
+enum Tool { T_HUNT, T_PROBES };
+static Tool tool = T_HUNT;
+static int  probeSel = 0;
+static uint32_t lastHop = 0;
+
 static void tick(int freq, int dur) { if (!muted) tone(BUZZER_PIN, freq, dur); }
 
 static uint16_t heat(int rssi, bool live) {
@@ -50,7 +57,7 @@ static void drawPicker() {
   d.setTextColor(C_VIOLET, C_BG);
   d.setCursor(4, 2); d.print("Wisp  pick a target");
   d.setTextColor(C_DIM, C_BG);
-  d.setCursor(4, SCRH - 9); d.print("A next  B lock  holdA rescan");
+  d.setCursor(4, SCRH - 9); d.print("A next  B lock  holdA scan  PWR probe");
   if (apCount == 0) {
     d.setTextColor(C_AMBER, C_BG);
     d.setCursor(4, 60); d.print("no APs - hold A to rescan");
@@ -69,6 +76,42 @@ static void drawPicker() {
     d.printf("%c%-14.14s c%-2d", on ? '>' : ' ', a.ssid, a.channel);
     d.setTextColor(col, on ? C_SEL : C_BG);
     char r[6]; snprintf(r, sizeof(r), "%d", a.rssi);
+    int w = d.textWidth(r);
+    d.setCursor(SCRW - w - 4, y); d.print(r);
+  }
+}
+
+// PROBES list: every nearby device that's calling out for a network, with the
+// SSID it's hunting for, its RSSI, and the channel we heard it on. Lock one (B)
+// to fox-hunt that specific phone/laptop. Channel-hops while open.
+static void drawProbes() {
+  auto &d = M5.Display;
+  d.fillScreen(C_BG);
+  d.setTextSize(1);
+  d.setTextColor(C_VIOLET, C_BG);
+  d.setCursor(4, 2);
+  d.printf("Wisp probes  ch%-2d  %d dev", hopCh, probeCount);
+  d.setTextColor(C_DIM, C_BG);
+  d.setCursor(4, SCRH - 9); d.print("A next  B lock  holdA clr  PWR hunt");
+  if (probeCount == 0) {
+    d.setTextColor(C_AMBER, C_BG);
+    d.setCursor(4, 60); d.print("listening for probe requests...");
+    return;
+  }
+  const int rows = 9, top = 15, rh = 12;
+  int start = constrain(probeSel - rows / 2, 0, max(0, probeCount - rows));
+  for (int i = 0; i < rows && start + i < probeCount; i++) {
+    int idx = start + i, y = top + i * rh;
+    bool on = (idx == probeSel);
+    Probe &pr = probes[idx];
+    uint16_t col = pr.rssi >= -60 ? C_MINT : pr.rssi >= -75 ? C_AMBER : C_PINK;
+    if (on) { d.fillRect(0, y - 1, SCRW, rh, C_SEL); d.setTextColor(C_TEXT, C_SEL); }
+    else d.setTextColor(C_DIM, C_BG);
+    d.setCursor(2, y);
+    d.printf("%c%02X:%02X:%02X %-11.11s", on ? '>' : ' ',
+             pr.mac[3], pr.mac[4], pr.mac[5], pr.ssid);
+    d.setTextColor(col, on ? C_SEL : C_BG);
+    char r[6]; snprintf(r, sizeof(r), "%d", pr.rssi);
     int w = d.textWidth(r);
     d.setCursor(SCRW - w - 4, y); d.print(r);
   }
@@ -167,6 +210,42 @@ void setup() {
 
 void loop() {
   M5.update();
+
+  // PWR toggles the top-level tool: AP/device fox-hunt <-> probe sniffer.
+  if (M5.BtnPWR.wasClicked()) {
+    if (tool == T_HUNT) {
+      tool = T_PROBES;
+      startProbes();
+      probeSel = 0;
+      lastHop = millis();
+      drawProbes();
+    } else {
+      tool = T_HUNT;
+      stopProbes();
+      startSta();
+      doScan();
+      drawPicker();
+    }
+    return;
+  }
+
+  if (tool == T_PROBES) {
+    uint32_t now = millis();
+    if (now - lastHop > 250) { hopChannel(); lastHop = now; }
+    if (M5.BtnA.wasClicked() && probeCount) probeSel = (probeSel + 1) % probeCount;
+    if (M5.BtnA.wasHold())    { probeCount = 0; probeSel = 0; }
+    if (M5.BtnB.wasClicked() && probeCount > 0) {
+      lockProbe(probeSel);      // -> mode == LOCKED on the chosen device
+      tool = T_HUNT;
+      lastFrame = 0;
+      drawMeter(-127, false);
+      return;
+    }
+    static uint32_t lastDraw = 0;
+    if (now - lastDraw > 200) { drawProbes(); lastDraw = now; }
+    delay(8);
+    return;
+  }
 
   if (mode == PICKING) {
     if (M5.BtnA.wasClicked()) { sel = (sel + 1) % max(1, apCount); drawPicker(); }
