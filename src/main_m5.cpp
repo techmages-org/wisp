@@ -13,6 +13,7 @@
 // ============================================================================
 #include <M5Unified.h>
 #include "foxcore.h"
+#include "wisp_logo.h"
 using namespace fox;
 
 // RGB565 palette
@@ -138,28 +139,17 @@ static void drawMeter(int rssi, bool live) {
   d.setCursor(130, 116); d.print("A mute  B back");
 }
 
-// Boot splash: brand + an expanding radar-ping animation, synced to the chirp.
+// Boot splash: the real Wisp logo (img/wisp.svg → PNG) + wordmark + boot chirp.
 static void splash() {
   auto &d = M5.Display;
   d.fillScreen(C_BG);
-  d.setTextColor(C_MINT, C_BG);  d.setTextSize(3); d.setCursor(8, 22);  d.print("Wisp");
-  d.setTextColor(C_VIOLET, C_BG); d.setTextSize(1); d.setCursor(10, 52); d.print("Wi-Fi AP fox-hunter");
-  d.setTextColor(C_DIM, C_BG);    d.setCursor(10, 66); d.print("Geiger locator");
-  d.setTextColor(C_AMBER, C_BG);  d.setCursor(10, SCRH - 11); d.print("v0.1");
-  const int cx = 196, cy = 64, maxR = 40, box = (maxR + 2) * 2;
-  const uint16_t cols[3] = {C_PINK, C_AMBER, C_MINT};
-  for (int p = 0; p < 3; p++) {
-    if (p == 0) tick(2200, 80);
-    if (p == 2) tick(3100, 80);
-    for (int r = 4; r <= maxR; r += 2) {
-      d.fillRect(cx - maxR - 2, cy - maxR - 2, box, box, C_BG); // clear radar pane
-      d.drawCircle(cx, cy, r, cols[p]);
-      d.drawCircle(cx, cy, r / 2, cols[p]);
-      d.fillCircle(cx, cy, 3, cols[p]);
-      delay(11);
-    }
-  }
-  delay(280);
+  int ly = (SCRH - 116) / 2; if (ly < 0) ly = 0;
+  d.drawPng(wisp_logo_png, wisp_logo_png_len, 6, ly); // 116x116 emblem, left
+  d.setTextColor(C_MINT, C_BG);   d.setTextSize(3); d.setCursor(132, 30); d.print("Wisp");
+  d.setTextColor(C_VIOLET, C_BG); d.setTextSize(1); d.setCursor(132, 60); d.print("Wi-Fi");
+  d.setCursor(132, 72); d.print("will-o'-wisp");
+  d.setTextColor(C_AMBER, C_BG);  d.setCursor(132, SCRH - 12); d.print("v0.1  TechMages");
+  tick(2200, 80); delay(170); tick(3100, 80); delay(950); // chirp + hold ~1.3s
 }
 
 void setup() {
