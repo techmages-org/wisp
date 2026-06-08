@@ -1,5 +1,5 @@
 // ============================================================================
-// APHound — M5 build (M5Unified). Targets the M5StickC Plus 1.1 and also runs on
+// Wisp — M5 build (M5Unified). Targets the M5StickC Plus 1.1 and also runs on
 // the M5 Cardputer / other M5 boards (M5Unified auto-detects display, buttons,
 // and the built-in buzzer/speaker — so NO external wiring).
 //
@@ -47,7 +47,7 @@ static void drawPicker() {
   d.fillScreen(C_BG);
   d.setTextSize(1);
   d.setTextColor(C_VIOLET, C_BG);
-  d.setCursor(4, 2); d.print("APHound  pick a target");
+  d.setCursor(4, 2); d.print("Wisp  pick a target");
   d.setTextColor(C_DIM, C_BG);
   d.setCursor(4, SCRH - 9); d.print("A next  B lock  holdA rescan");
   if (apCount == 0) {
@@ -138,6 +138,30 @@ static void drawMeter(int rssi, bool live) {
   d.setCursor(130, 116); d.print("A mute  B back");
 }
 
+// Boot splash: brand + an expanding radar-ping animation, synced to the chirp.
+static void splash() {
+  auto &d = M5.Display;
+  d.fillScreen(C_BG);
+  d.setTextColor(C_MINT, C_BG);  d.setTextSize(3); d.setCursor(8, 22);  d.print("Wisp");
+  d.setTextColor(C_VIOLET, C_BG); d.setTextSize(1); d.setCursor(10, 52); d.print("Wi-Fi AP fox-hunter");
+  d.setTextColor(C_DIM, C_BG);    d.setCursor(10, 66); d.print("Geiger locator");
+  d.setTextColor(C_AMBER, C_BG);  d.setCursor(10, SCRH - 11); d.print("v0.1");
+  const int cx = 196, cy = 64, maxR = 40, box = (maxR + 2) * 2;
+  const uint16_t cols[3] = {C_PINK, C_AMBER, C_MINT};
+  for (int p = 0; p < 3; p++) {
+    if (p == 0) tick(2200, 80);
+    if (p == 2) tick(3100, 80);
+    for (int r = 4; r <= maxR; r += 2) {
+      d.fillRect(cx - maxR - 2, cy - maxR - 2, box, box, C_BG); // clear radar pane
+      d.drawCircle(cx, cy, r, cols[p]);
+      d.drawCircle(cx, cy, r / 2, cols[p]);
+      d.fillCircle(cx, cy, 3, cols[p]);
+      delay(11);
+    }
+  }
+  delay(280);
+}
+
 void setup() {
   auto cfg = M5.config();
   cfg.internal_spk = false; // don't let M5 grab the GPIO2 buzzer — we drive it
@@ -146,7 +170,7 @@ void setup() {
   SCRW = M5.Display.width();
   SCRH = M5.Display.height();
   pinMode(BUZZER_PIN, OUTPUT);
-  tick(2200, 80); delay(150); tick(3100, 80); delay(120); // boot chirp (proves audio)
+  splash();
   doScan();
   drawPicker();
 }

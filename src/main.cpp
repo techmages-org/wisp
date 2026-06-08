@@ -1,5 +1,5 @@
 // ============================================================================
-// APHound — ESP32-S3 Wi-Fi AP fox-hunter (Geiger locator)
+// Wisp — ESP32-S3 Wi-Fi AP fox-hunter (Geiger locator)
 // Board: LilyGo T-Display-S3 (ST7789 170x320, 2 buttons, LiPo). No speaker, so
 // the Geiger rides a passive buzzer on a GPIO.
 //
@@ -156,7 +156,7 @@ static void drawPicker() {
   tft.fillScreen(C_BG);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(C_VIOLET, C_BG);
-  tft.drawString("APHound  pick a target", 6, 4, 2);
+  tft.drawString("Wisp  pick a target", 6, 4, 2);
   tft.setTextColor(C_DIM, C_BG);
   tft.drawString("BTN1 next  BTN2 lock  hold BTN1 rescan", 6, 154, 2);
   if (apCount == 0) {

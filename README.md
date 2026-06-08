@@ -1,4 +1,4 @@
-# APHound — ESP32-S3 Wi-Fi AP fox-hunter (Geiger locator)
+# Wisp — ESP32-S3 Wi-Fi AP fox-hunter (Geiger locator)
 
 A pocket "where's that AP?" tool. Lock onto an access point's MAC and walk it down
 by ear: a buzzer **ticks faster as you get closer** (Geiger style), with a dBm /

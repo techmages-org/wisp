@@ -48,11 +48,48 @@ static inline uint32_t geigerInterval(float rssi) {
   return (uint32_t)map(r, -90, -35, 1300, 110);
 }
 
-// Promiscuous rx callback: keep only frames TRANSMITTED BY the target (802.11
-// addr2 == target MAC) → that frame's RSSI is the target's signal here.
+// --- PROBES tool: nearby devices + the SSIDs their phones call out for --------
+struct Probe { uint8_t mac[6]; char ssid[24]; int8_t rssi; uint8_t ch; uint32_t lastMs; };
+static const int MAX_PROBE = 48;
+static Probe   probes[MAX_PROBE];
+static int     probeCount = 0;
+static bool    probeCapturing = false;
+static uint8_t hopCh = 1;
+
+static void addProbe(const uint8_t* mac, const char* ssid, int8_t rssi, uint8_t ch) {
+  for (int i = 0; i < probeCount; i++)
+    if (memcmp(probes[i].mac, mac, 6) == 0 && strncmp(probes[i].ssid, ssid, sizeof(probes[i].ssid)) == 0) {
+      probes[i].rssi = rssi; probes[i].ch = ch; probes[i].lastMs = millis();
+      return;
+    }
+  if (probeCount >= MAX_PROBE) return;
+  Probe& pr = probes[probeCount++];
+  memcpy(pr.mac, mac, 6);
+  strncpy(pr.ssid, ssid, sizeof(pr.ssid) - 1); pr.ssid[sizeof(pr.ssid) - 1] = 0;
+  pr.rssi = rssi; pr.ch = ch; pr.lastMs = millis();
+}
+
+// Promiscuous rx callback. HUNT: keep frames TRANSMITTED BY the target (addr2 ==
+// target MAC) for its RSSI. PROBES: parse probe-request frames (mgmt subtype 0x40)
+// for the device MAC + the SSID it's searching for.
 static void snifferCb(void* buf, wifi_promiscuous_pkt_type_t type) {
   const wifi_promiscuous_pkt_t* p = (const wifi_promiscuous_pkt_t*)buf;
   const uint8_t* pl = p->payload;
+  if (probeCapturing) {
+    if (pl[0] == 0x40) { // probe request
+      char ssid[24] = {0};
+      if (pl[24] == 0x00) { // tag 0 = SSID, starts after the 24-byte mgmt header
+        int len = pl[25]; if (len > 23) len = 23;
+        for (int i = 0; i < len; i++) {
+          uint8_t c = pl[26 + i];
+          ssid[i] = (c >= 32 && c < 127) ? c : '.';
+        }
+        ssid[len] = 0;
+      }
+      addProbe(pl + 10, ssid[0] ? ssid : "(any)", p->rx_ctrl.rssi, hopCh);
+    }
+    return;
+  }
   if (memcmp(pl + 10, targetMac, 6) == 0) {
     g_rssi = p->rx_ctrl.rssi;
     g_rssiMs = millis();
