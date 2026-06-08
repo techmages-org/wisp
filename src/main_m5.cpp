@@ -26,11 +26,16 @@ using namespace fox;
 #define C_RING 0x2104
 #define C_SEL 0x18E3
 
+// StickC Plus buzzer = a PASSIVE piezo on GPIO2. M5.Speaker is finicky with it,
+// so we disable M5's speaker (cfg.internal_spk=false) and drive GPIO2 directly
+// with Arduino tone() — a square wave the piezo turns into a real "tick".
+#define BUZZER_PIN 2
+
 static bool muted = false;
 static uint32_t lastTickMs = 0;
 static int SCRW = 240, SCRH = 135;
 
-static void tick(int freq, int dur) { if (!muted) M5.Speaker.tone(freq, dur); }
+static void tick(int freq, int dur) { if (!muted) tone(BUZZER_PIN, freq, dur); }
 
 static uint16_t heat(int rssi, bool live) {
   if (!live) return C_DIM;
@@ -135,13 +140,13 @@ static void drawMeter(int rssi, bool live) {
 
 void setup() {
   auto cfg = M5.config();
+  cfg.internal_spk = false; // don't let M5 grab the GPIO2 buzzer — we drive it
   M5.begin(cfg);
   M5.Display.setRotation(1);
   SCRW = M5.Display.width();
   SCRH = M5.Display.height();
-  M5.Speaker.begin();
-  M5.Speaker.setVolume(160);
-  tick(2200, 70); delay(90); tick(3100, 70);
+  pinMode(BUZZER_PIN, OUTPUT);
+  tick(2200, 80); delay(150); tick(3100, 80); delay(120); // boot chirp (proves audio)
   doScan();
   drawPicker();
 }
