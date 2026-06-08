@@ -1,61 +1,180 @@
-# Wisp — ESP32-S3 Wi-Fi AP fox-hunter (Geiger locator)
+<div align="center">
 
-A pocket "where's that AP?" tool. Lock onto an access point's MAC and walk it down
-by ear: a buzzer **ticks faster as you get closer** (Geiger style), with a dBm /
-signal-bar / warmer-colder / peak-hold readout on the screen. It's the Warlock
-deck's AP locator, shrunk to a standalone battery gadget.
+<img src="assets/wisp.png" alt="Wisp" width="180" />
 
-> Board: **LilyGo T-Display-S3** (ESP32-S3, 1.9" 170×320 LCD, 2 buttons, LiPo).
-> Built with PlatformIO. Side project — rename `aphound` to whatever you like.
+# Wisp
 
-## How it works
-ESP32-S3 **promiscuous mode**: the rx callback fires on every 802.11 frame and
-hands us `rx_ctrl.rssi`. We keep only frames whose **transmitter address (addr2)
-== the target MAC** — so the RSSI is the target's signal, attributed to the right
-radio (the on-chip version of the deck's `wlan.ta` tshark filter). Cadence:
-`-90 dBm → ~1300 ms (slow blips) … -35 dBm → ~110 ms (fast chatter)`.
+### A pocket Wi-Fi will-o'-the-wisp 🔵
 
-## One part to add: a buzzer
-No onboard speaker, so wire a **passive buzzer or piezo**:
+**Lock an access point — or a single device — by MAC, then walk it down by ear.**
+A buzzer that ticks faster as you close in, a radar "getting warmer" screen, and
+peak-hold — all on a battery-powered ESP32 that fits in your palm.
 
-```
- buzzer (+)  →  GPIO16   (PIN_BUZZER in src/main.cpp — change to any free GPIO)
- buzzer (–)  →  GND
-```
-A 3.3 V active buzzer also works but ignores the pitch (still ticks). For a real
-"tick", a **passive** piezo + the firmware's `tone()` is best. The T-Display-S3
-breaks out 16/17/18/21/etc. on the side header — any free one works.
+<br>
 
-## Flash it
+![platform ESP32](https://img.shields.io/badge/platform-ESP32-3C3C3C?style=for-the-badge&logo=espressif&logoColor=white&labelColor=0A0B10)
+![PlatformIO](https://img.shields.io/badge/build-PlatformIO-FF7F00?style=for-the-badge&logo=platformio&logoColor=white&labelColor=0A0B10)
+![Arduino](https://img.shields.io/badge/framework-Arduino-00979D?style=for-the-badge&logo=arduino&logoColor=white&labelColor=0A0B10)
+![white-hat](https://img.shields.io/badge/security-white--hat-5FEFA0?style=for-the-badge&labelColor=0A0B10)
+![license MIT](https://img.shields.io/badge/license-MIT-9B8CF0?style=for-the-badge&labelColor=0A0B10)
+
+*The handheld sibling to the [**Warlock**](https://github.com/techmages-org/warlock) cyberdeck — rogue-AP hunting, in your hand.*
+**An open project of [🧙‍♂️ TechMages](https://github.com/techmages-org).**
+
+</div>
+
+---
+
+## What is it?
+
+Ever needed to find *where* a Wi-Fi signal is actually coming from? A rogue AP
+plugged into a closet. A pineapple in the ceiling tiles. A device that keeps
+beaconing and you don't know which desk it's on.
+
+**Wisp turns radio signal strength into sound and motion.** Pick a target, and the
+closer you walk, the faster it ticks — like a Geiger counter for Wi-Fi. Watch the
+radar ring pulse quicker, the dBm climb, the **WARMER / COLDER** readout flip. When
+you hit a new closest-approach, it fires a sharp double-beep: *you're on it.*
+
+It's the [Warlock deck's](https://github.com/techmages-org/warlock) AP locator,
+shrunk down to a thing you can clip to a lanyard and hand to a teammate.
+
+> 🛡 **White-hat by design.** Wisp is a *receiver* — it listens to signal strength
+> on networks you're authorized to survey. It doesn't connect, deauth, inject, or
+> capture traffic. Hunt your own APs, or ones you have written permission to find.
+
+## ✨ Two tools in one
+
+| Mode | What it does |
+|------|--------------|
+| 🎯 **HUNT** | Scan the air, **lock an AP by MAC**, and home in. Geiger ticks + radar + dBm + warmer/colder + peak-hold. The core fox-hunt. |
+| 📡 **PROBES** | Sniff **probe requests** — every nearby phone/laptop calling out for networks, with the SSID it's hunting and its signal. **Lock one** and fox-hunt *that device* instead of an AP. |
+
+Press the **power button** to flip between them.
+
+## 🔧 Boards
+
+Wisp builds for two boards from one codebase — the radio + signal logic lives in a
+shared `foxcore.h`; each board has its own thin `main`.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### ⭐ M5StickC Plus 1.1 *(recommended)*
+**`m5stickc-plus`** · zero wiring
+
+ESP32-PICO, built-in color LCD, buttons, **buzzer**, and **LiPo battery** — it's a
+finished gadget out of the box. Also runs on the **M5 Cardputer** and other M5
+boards (M5Unified auto-detects). This is the one to start with.
+
+</td>
+<td width="50%" valign="top">
+
+### LilyGo T-Display-S3
+**`tdisplay-s3`** · add one buzzer
+
+ESP32-S3 with a bright 1.9″ 170×320 LCD and two buttons. No onboard speaker — wire
+a **passive piezo** to a free GPIO (default `GPIO16`) for the ticks. Bigger screen,
+USB-C, internal LiPo connector.
+
+</td>
+</tr>
+</table>
+
+## 🚀 Build & flash
+
+Install [PlatformIO](https://platformio.org/install) (the CLI or the VS Code
+extension), plug the board in over USB, and:
+
 ```bash
-# from this folder, board plugged in over USB-C:
-pio run -t upload          # build + flash
-pio device monitor         # 115200, optional serial log
+# M5StickC Plus 1.1  (recommended — nothing to wire)
+pio run -e m5stickc-plus -t upload
+
+# LilyGo T-Display-S3  (add a passive buzzer on GPIO16)
+pio run -e tdisplay-s3 -t upload
+
+# optional serial log (115200)
+pio device monitor
 ```
-First build downloads the ESP32-S3 toolchain (a few minutes, once).
 
-## Use it (2 buttons)
-- **BTN2 (GPIO14)** — lock onto the highlighted AP → homing meter starts.
-- **BTN1 (GPIO0 / BOOT)** — next AP in the list · while locked: **mute** the buzzer.
-- **hold BTN1** — rescan.
-- **BTN2 while locked** — back to the list to pick another target.
+The first build downloads the ESP32 toolchain (a few minutes, once). That's it —
+the device boots straight into a scan.
 
-Boot → it scans → pick the AP → lock → walk toward it. The tick speeds up as you
-close in; a sharper double-beep fires each time you hit a **new peak** (you just
-got closer than ever — the "you passed it / you're on it" cue).
+## 🎮 Controls
 
-## Gotchas (T-Display-S3)
-- **Black screen?** `GPIO15` (PWR_ON) must be HIGH — the firmware does this in
-  `setup()`. If you fork the display code, keep it.
-- **Wrong colors / inverted?** Flip `-DTFT_RGB_ORDER` (TFT_RGB↔TFT_BGR) or toggle
-  `-DTFT_INVERSION_ON` in `platformio.ini`.
-- **No sound?** Confirm the buzzer is **passive** and on `PIN_BUZZER`; active
-  buzzers self-oscillate and won't change pitch. Check `muted` (BTN1 toggles it).
-- **Battery volts off?** The divider/ADC cal varies a little per board; tweak
-  `batteryVolts()`.
+**M5StickC Plus** — A (big front button) · B (side) · PWR (power)
 
-## Roadmap (matches the deck)
-- Pre-load a known **rogue MAC** (skip the picker) for targeted sweeps.
-- A second "search mode": steady tone whose **pitch** tracks signal (sonar).
-- Lock onto a **client** MAC, not just an AP (already MAC-generic in the callback —
-  just needs the channel).
+| | HUNT — picking | HUNT — locked | PROBES |
+|---|---|---|---|
+| **A** | next AP | mute buzzer | next device |
+| **hold A** | rescan | — | clear list |
+| **B** | lock target | back to list | lock device → hunt it |
+| **PWR** | → PROBES | → PROBES | → HUNT |
+
+**T-Display-S3** — BTN1 (GPIO0/BOOT) = next / mute · hold = rescan · BTN2 (GPIO14) = lock / back.
+
+Boot → it scans → pick a target → lock → walk toward it. The tick quickens as you
+close in; the double-beep means **new peak** — you just got closer than ever.
+
+## 🧠 How it works
+
+ESP32 **promiscuous mode**: the rx callback fires on every 802.11 frame and hands us
+`rx_ctrl.rssi`. In HUNT we keep only frames whose **transmitter address (addr2) ==
+the target MAC**, so the RSSI is *that radio's* signal, attributed correctly — the
+on-chip version of the deck's `wlan.ta` tshark filter. In PROBES we parse management
+**probe-request** frames (subtype `0x40`) for the device MAC and the SSID it's
+searching for, channel-hopping to sweep the band.
+
+Signal → cadence is a simple map, smoothed and peak-held:
+
+```
+-90 dBm  →  ~1300 ms   (slow, distant blips)
+-35 dBm  →  ~110 ms    (fast, you're-right-on-it chatter)
+```
+
+## 🤝 Contributing
+
+Wisp is open and we'd love your help. It shares the
+[**TechMages**](https://github.com/techmages-org) white-hat, authorization-first
+ethos — please read the
+[**Contributing guide**](https://github.com/techmages-org/techmages/blob/main/CONTRIBUTING.md)
+and the
+[**Code of Ethics**](https://github.com/techmages-org/techmages/blob/main/CODE_OF_ETHICS.md)
+before opening a PR. Both are non-negotiable.
+
+### 🙋 How to help
+
+No matter your level, there's a way in:
+
+- 🔌 **Port it to another board** — got an M5 Stamp, an ESP32-C3, a Heltec? Add an
+  env + a thin `main`. `foxcore.h` already does the radio.
+- 🎨 **New search modes** — a sonar pitch-sweep, a vibration motor, an RGB "hot/cold"
+  LED bar, a screen visual. The cadence math is one function away.
+- 🐛 **Field reports** — tried it on a real hunt? Open an issue with what worked,
+  what didn't, and your board. Real-world RSSI behavior is gold.
+- 📖 **Docs & photos** — wiring diagrams, a build photo, a demo GIF of the radar
+  closing in. Show people what it looks like.
+- 💡 **Ideas** — pre-loaded rogue-MAC lists, a logging mode, a deck handoff. Open an
+  issue and let's talk.
+
+Pick up an [open issue](https://github.com/techmages-org/wisp/issues) or open a new
+one — even a question helps.
+
+### Contributors
+
+<a href="https://github.com/techmages-org/wisp/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=techmages-org/wisp" alt="Wisp contributors" />
+</a>
+
+## 📜 License
+
+MIT — see [`LICENSE`](LICENSE). Use it, fork it, build on it. Hunt responsibly.
+
+---
+
+<div align="center">
+
+*The deck is the [Warlock](https://github.com/techmages-org/warlock). The org is [TechMages](https://github.com/techmages-org). The wisp lights the way.* 🔵
+
+</div>
