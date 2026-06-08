@@ -43,14 +43,15 @@ shrunk down to a thing you can clip to a lanyard and hand to a teammate.
 > on networks you're authorized to survey. It doesn't connect, deauth, inject, or
 > capture traffic. Hunt your own APs, or ones you have written permission to find.
 
-## ✨ Two tools in one
+## ✨ Three tools in one
 
 | Mode | What it does |
 |------|--------------|
 | 🎯 **HUNT** | Scan the air, **lock an AP by MAC**, and home in. Geiger ticks + radar + dBm + warmer/colder + peak-hold. The core fox-hunt. |
-| 📡 **PROBES** | Sniff **probe requests** — every nearby phone/laptop calling out for networks, with the SSID it's hunting and its signal. **Lock one** and fox-hunt *that device* instead of an AP. |
+| 📡 **PROBES** | Sniff **probe requests** — every nearby phone/laptop *searching* for networks, with the SSID it's hunting and its signal. **Lock one** and fox-hunt *that device* instead of an AP. |
+| 👥 **CLIENTS** | Pick an AP and see the **stations actually associated to it** (read live from its data frames, parked on its channel). **Lock one** and walk down that specific connected device. |
 
-Press the **power button** to flip between them.
+**PWR** flips HUNT ⇄ PROBES. **Hold B** on an AP in the picker drills into its **CLIENTS**. Any list → lock a target (**B**) and the Geiger meter takes over.
 
 ## 🔧 Boards
 
@@ -105,12 +106,13 @@ the device boots straight into a scan.
 
 **M5StickC Plus** — A (big front button) · B (side) · PWR (power)
 
-| | HUNT — picking | HUNT — locked | PROBES |
-|---|---|---|---|
-| **A** | next AP | mute buzzer | next device |
-| **hold A** | rescan | — | clear list |
-| **B** | lock target | back to list | lock device → hunt it |
-| **PWR** | → PROBES | → PROBES | → HUNT |
+| | HUNT — picking | HUNT — locked | PROBES | CLIENTS |
+|---|---|---|---|---|
+| **A** | next AP | mute buzzer | next device | next station |
+| **hold A** | rescan | — | clear list | back to APs |
+| **B** | lock & hunt AP | back to list | lock device → hunt it | lock station → hunt it |
+| **hold B** | this AP's **clients** | — | — | — |
+| **PWR** | → PROBES | → PROBES | → HUNT | → AP picker |
 
 **T-Display-S3** — BTN1 (GPIO0/BOOT) = next / mute · hold = rescan · BTN2 (GPIO14) = lock / back.
 
@@ -124,7 +126,11 @@ ESP32 **promiscuous mode**: the rx callback fires on every 802.11 frame and hand
 the target MAC**, so the RSSI is *that radio's* signal, attributed correctly — the
 on-chip version of the deck's `wlan.ta` tshark filter. In PROBES we parse management
 **probe-request** frames (subtype `0x40`) for the device MAC and the SSID it's
-searching for, channel-hopping to sweep the band.
+searching for, channel-hopping to sweep the band. In CLIENTS we park on the chosen
+AP's channel and read **data frames** — the `ToDS`/`FromDS` bits tell us which
+address is the station, so a frame *to* the AP reveals the client as `addr2` and a
+frame *from* the AP reveals it as `addr1`. Lock any of these and the hunt is the same
+math — only the target MAC changes.
 
 Signal → cadence is a simple map, smoothed and peak-held:
 
