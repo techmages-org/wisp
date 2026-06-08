@@ -1,0 +1,177 @@
+// ============================================================================
+// APHound — M5 build (M5Unified). Targets the M5StickC Plus 1.1 and also runs on
+// the M5 Cardputer / other M5 boards (M5Unified auto-detects display, buttons,
+// and the built-in buzzer/speaker — so NO external wiring).
+//
+// Adds the "getting closer" RADAR animation: an expanding ping ring whose rate is
+// the Geiger cadence (faster as you close in), a center blip that grows hotter,
+// + dBm / signal-bar / WARMER-COLDER / peak readouts. Buzzer ticks faster as the
+// target gets stronger; a sharper double-beep on each new peak.
+//
+// Buttons (StickC Plus): A (big front "M5") = next AP / mute · B (side) = lock /
+// back to list · hold A = rescan.
+// ============================================================================
+#include <M5Unified.h>
+#include "foxcore.h"
+using namespace fox;
+
+// RGB565 palette
+#define C_BG 0x0000
+#define C_DIM 0x52AA
+#define C_TEXT 0xFFFF
+#define C_MINT 0x5FEB
+#define C_AMBER 0xFD20
+#define C_PINK 0xF9A6
+#define C_VIOLET 0x9C1F
+#define C_RING 0x2104
+#define C_SEL 0x18E3
+
+static bool muted = false;
+static uint32_t lastTickMs = 0;
+static int SCRW = 240, SCRH = 135;
+
+static void tick(int freq, int dur) { if (!muted) M5.Speaker.tone(freq, dur); }
+
+static uint16_t heat(int rssi, bool live) {
+  if (!live) return C_DIM;
+  return rssi >= -60 ? C_MINT : rssi >= -75 ? C_AMBER : C_PINK;
+}
+
+static void drawPicker() {
+  auto &d = M5.Display;
+  d.fillScreen(C_BG);
+  d.setTextSize(1);
+  d.setTextColor(C_VIOLET, C_BG);
+  d.setCursor(4, 2); d.print("APHound  pick a target");
+  d.setTextColor(C_DIM, C_BG);
+  d.setCursor(4, SCRH - 9); d.print("A next  B lock  holdA rescan");
+  if (apCount == 0) {
+    d.setTextColor(C_AMBER, C_BG);
+    d.setCursor(4, 60); d.print("no APs - hold A to rescan");
+    return;
+  }
+  const int rows = 9, top = 15, rh = 12;
+  int start = constrain(sel - rows / 2, 0, max(0, apCount - rows));
+  for (int i = 0; i < rows && start + i < apCount; i++) {
+    int idx = start + i, y = top + i * rh;
+    bool on = (idx == sel);
+    AP &a = aps[idx];
+    uint16_t col = a.rssi >= -60 ? C_MINT : a.rssi >= -75 ? C_AMBER : C_PINK;
+    if (on) { d.fillRect(0, y - 1, SCRW, rh, C_SEL); d.setTextColor(C_TEXT, C_SEL); }
+    else d.setTextColor(C_DIM, C_BG);
+    d.setCursor(2, y);
+    d.printf("%c%-14.14s c%-2d", on ? '>' : ' ', a.ssid, a.channel);
+    d.setTextColor(col, on ? C_SEL : C_BG);
+    char r[6]; snprintf(r, sizeof(r), "%d", a.rssi);
+    int w = d.textWidth(r);
+    d.setCursor(SCRW - w - 4, y); d.print(r);
+  }
+}
+
+static float pingPhase = 0;
+static uint32_t lastFrame = 0;
+
+static void drawMeter(int rssi, bool live) {
+  auto &d = M5.Display;
+  uint32_t now = millis();
+  uint32_t dt = lastFrame ? now - lastFrame : 33;
+  lastFrame = now;
+  uint16_t rc = heat(rssi, live);
+  int dir = trendDir();
+
+  // header
+  d.fillRect(0, 0, SCRW, 13, C_BG);
+  d.setTextSize(1);
+  d.setTextColor(C_VIOLET, C_BG);
+  d.setCursor(2, 2);
+  d.printf("%.12s c%d", targetName[0] ? targetName : macStr(targetMac), targetCh);
+  char bat[8]; snprintf(bat, sizeof(bat), "%d%%", M5.Power.getBatteryLevel());
+  int bw = d.textWidth(bat);
+  d.setTextColor(C_DIM, C_BG);
+  d.setCursor(SCRW - bw - 2, 2); d.print(bat);
+
+  // --- RADAR (left): faint rings + an expanding ping at the Geiger rate ---
+  const int cx = 60, cy = 74, maxR = 56;
+  d.fillRect(0, 14, 122, SCRH - 14, C_BG);
+  for (int rr = maxR; rr > 6; rr -= 14) d.drawCircle(cx, cy, rr, C_RING);
+  d.drawFastHLine(cx - maxR, cy, maxR * 2, C_RING);
+  d.drawFastVLine(cx, cy - maxR, maxR * 2, C_RING);
+  if (live) {
+    uint32_t iv = geigerInterval(smRssi);
+    pingPhase += (float)dt / (float)iv;
+    while (pingPhase >= 1) pingPhase -= 1;
+    int pr = (int)(pingPhase * maxR);
+    d.drawCircle(cx, cy, pr, rc);
+    if (pr > 1) d.drawCircle(cx, cy, pr - 1, rc);
+    int dot = rssi >= -50 ? 7 : rssi >= -65 ? 5 : 3;
+    d.fillCircle(cx, cy, dot, rc);
+  } else {
+    d.fillCircle(cx, cy, 3, C_DIM);
+  }
+
+  // --- readouts (right) ---
+  d.fillRect(124, 14, SCRW - 124, SCRH - 14, C_BG);
+  d.setTextColor(rc, C_BG);
+  d.setTextSize(3);
+  d.setCursor(130, 22);
+  if (live) d.printf("%d", rssi); else d.print("--");
+  d.setTextColor(C_DIM, C_BG);
+  d.setTextSize(1);
+  d.setCursor(130, 48); d.print("dBm");
+
+  int x = 130, y = 64, w = SCRW - x - 6, h = 12;
+  d.drawRect(x, y, w, h, C_DIM);
+  int fill = live ? (int)(((constrain(rssi, -90, -30) + 90) / 60.0f) * (w - 2)) : 0;
+  if (fill > 0) d.fillRect(x + 1, y + 1, fill, h - 2, rc);
+
+  const char *tw = !live ? "ACQUIRING" : dir > 0 ? "WARMER >>" : dir < 0 ? "COLDER <<" : "STEADY";
+  uint16_t tc = !live ? C_DIM : dir > 0 ? C_MINT : dir < 0 ? C_PINK : C_AMBER;
+  d.setTextColor(tc, C_BG);
+  d.setCursor(130, 84); d.print(tw);
+  d.setTextColor(C_DIM, C_BG);
+  d.setCursor(130, 100); d.printf("pk %d %s", peakRssi, muted ? "[mute]" : "");
+  d.setCursor(130, 116); d.print("A mute  B back");
+}
+
+void setup() {
+  auto cfg = M5.config();
+  M5.begin(cfg);
+  M5.Display.setRotation(1);
+  SCRW = M5.Display.width();
+  SCRH = M5.Display.height();
+  M5.Speaker.begin();
+  M5.Speaker.setVolume(160);
+  tick(2200, 70); delay(90); tick(3100, 70);
+  doScan();
+  drawPicker();
+}
+
+void loop() {
+  M5.update();
+
+  if (mode == PICKING) {
+    if (M5.BtnA.wasClicked()) { sel = (sel + 1) % max(1, apCount); drawPicker(); }
+    if (M5.BtnA.wasHold())    { doScan(); drawPicker(); }
+    if (M5.BtnB.wasClicked() && apCount > 0) { lockSelection(); lastFrame = 0; drawMeter(-127, false); }
+    delay(12);
+    return;
+  }
+
+  if (mode == LOCKED) {
+    if (M5.BtnB.wasClicked()) { startSta(); doScan(); drawPicker(); return; }
+    if (M5.BtnA.wasClicked()) { muted = !muted; }
+    bool live; int rssi;
+    bool newPeak = updateSignal(live, rssi);
+    uint32_t now = millis();
+    if (newPeak) tick(2600, 35);
+    if (live) {
+      uint32_t iv = geigerInterval(smRssi);
+      if (now - lastTickMs >= iv) { tick(1000, 16); lastTickMs = now; }
+    }
+    static uint32_t lastDraw = 0;
+    if (now - lastDraw > 45) { drawMeter(rssi, live); lastDraw = now; }
+    delay(3);
+    return;
+  }
+  delay(20);
+}
