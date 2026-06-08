@@ -168,10 +168,14 @@ static inline int trendDir() {
 }
 
 // --- PROBES lifecycle -------------------------------------------------------
+// NOTE: mirror startSniffer's order exactly — set WIFI_STA mode immediately
+// before enabling promiscuous. Do NOT call WiFi.disconnect(true) here: the
+// `true` (wifioff) flag runs esp_wifi_stop(), and a stopped radio makes the
+// following esp_wifi_set_promiscuous(true) fail silently — the rx callback then
+// never fires and the probe list stays empty no matter how long you hop.
 static void startProbes() {
   esp_wifi_set_promiscuous(false);
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true);
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_promiscuous_rx_cb(snifferCb);
   probeCapturing = true;
