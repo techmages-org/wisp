@@ -27,10 +27,13 @@ using namespace fox;
 #define C_RING 0x2104
 #define C_SEL 0x18E3
 
-// StickC Plus buzzer = a PASSIVE piezo on GPIO2. M5.Speaker is finicky with it,
-// so we disable M5's speaker (cfg.internal_spk=false) and drive GPIO2 directly
-// with Arduino tone() — a square wave the piezo turns into a real "tick".
+// Audio differs by board. The StickC Plus 1.1 has a PASSIVE piezo on GPIO2 that
+// M5.Speaker won't drive well, so we disable M5's speaker and hit GPIO2 directly
+// with Arduino tone(). The ESP32-S3 stick has a speaker M5Unified DOES drive, so
+// there we use M5.Speaker.tone() and let the lib own whatever pin/codec it is.
+#ifndef WISP_S3
 #define BUZZER_PIN 2
+#endif
 
 static bool muted = false;
 static uint32_t lastTickMs = 0;
@@ -47,7 +50,14 @@ static int  clientSel = 0;
 static char clientApName[33] = "";
 static uint32_t lastHop = 0;
 
-static void tick(int freq, int dur) { if (!muted) tone(BUZZER_PIN, freq, dur); }
+static void tick(int freq, int dur) {
+  if (muted) return;
+#ifdef WISP_S3
+  M5.Speaker.tone(freq, dur);   // S3 stick: real speaker, driven by M5Unified
+#else
+  tone(BUZZER_PIN, freq, dur);  // Plus 1.1: passive piezo on GPIO2
+#endif
+}
 
 static uint16_t heat(int rssi, bool live) {
   if (!live) return C_DIM;
@@ -236,12 +246,18 @@ static void splash() {
 
 void setup() {
   auto cfg = M5.config();
-  cfg.internal_spk = false; // don't let M5 grab the GPIO2 buzzer — we drive it
+#ifndef WISP_S3
+  cfg.internal_spk = false; // Plus 1.1: don't let M5 grab the GPIO2 buzzer — we drive it
+#endif
   M5.begin(cfg);
   M5.Display.setRotation(1);
   SCRW = M5.Display.width();
   SCRH = M5.Display.height();
+#ifdef WISP_S3
+  M5.Speaker.setVolume(200);  // S3 stick: crank the real speaker
+#else
   pinMode(BUZZER_PIN, OUTPUT);
+#endif
   splash();
   doScan();
   drawPicker();

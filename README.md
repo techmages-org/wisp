@@ -55,33 +55,15 @@ shrunk down to a thing you can clip to a lanyard and hand to a teammate.
 
 ## 🔧 Boards
 
-Wisp builds for two boards from one codebase — the radio + signal logic lives in a
-shared `foxcore.h`; each board has its own thin `main`.
+Wisp builds for **three boards** from one codebase — the radio + signal logic lives in a
+shared `foxcore.h`. The two M5 sticks share `main_m5.cpp` (M5Unified auto-detects the
+hardware at boot); the LilyGo has its own `main.cpp`.
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### ⭐ M5StickC Plus 1.1 *(recommended)*
-**`m5stickc-plus`** · zero wiring
-
-ESP32-PICO, built-in color LCD, buttons, **buzzer**, and **LiPo battery** — it's a
-finished gadget out of the box. Also runs on the **M5 Cardputer** and other M5
-boards (M5Unified auto-detects). This is the one to start with.
-
-</td>
-<td width="50%" valign="top">
-
-### LilyGo T-Display-S3
-**`tdisplay-s3`** · add one buzzer
-
-ESP32-S3 with a bright 1.9″ 170×320 LCD and two buttons. No onboard speaker — wire
-a **passive piezo** to a free GPIO (default `GPIO16`) for the ticks. Bigger screen,
-USB-C, internal LiPo connector.
-
-</td>
-</tr>
-</table>
+| Board | Env | Notes |
+|---|---|---|
+| ⭐ **M5StickC Plus 1.1** *(recommended)* | `m5stickc-plus` | ESP32-PICO. Built-in LCD + buttons + **buzzer** + **LiPo** — a finished gadget, zero wiring. Also runs on the M5 Cardputer & other PICO-class M5 boards. |
+| 🆕 **M5 ESP32-S3 stick** | `m5stick-s3` | The newer **ESP32-S3** stick — native USB, on-board **speaker** + **mic**. Same firmware, built for S3 with a newer M5Unified so the panel/buttons/speaker come up on their own. Zero wiring; flashes over its `usbmodem` port. |
+| **LilyGo T-Display-S3** | `tdisplay-s3` | ESP32-S3, bright 1.9″ 170×320 LCD, two buttons. No onboard speaker — wire a **passive piezo** to a free GPIO (default `GPIO16`). Bigger screen, USB-C. |
 
 ## 🚀 Build & flash
 
@@ -91,6 +73,9 @@ extension), plug the board in over USB, and:
 ```bash
 # M5StickC Plus 1.1  (recommended — nothing to wire)
 pio run -e m5stickc-plus -t upload
+
+# M5 ESP32-S3 stick  (native USB — flashes over its usbmodem port)
+pio run -e m5stick-s3 -t upload
 
 # LilyGo T-Display-S3  (add a passive buzzer on GPIO16)
 pio run -e tdisplay-s3 -t upload
