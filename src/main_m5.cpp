@@ -39,6 +39,14 @@ static bool muted = false;
 static uint32_t lastTickMs = 0;
 static int SCRW = 240, SCRH = 135;
 
+// Power saving (small on-board battery): a moderate default backlight + auto-dim
+// of the browse screens when idle (never the hunt meter — that's when you're
+// actively reading it). CPU also drops to 160 MHz in setup: WiFi-safe, and about
+// half the core draw of 240 MHz. Any button press wakes the screen.
+static const uint8_t BRI_FULL = 170, BRI_DIM = 24;
+static uint32_t lastInput = 0;
+static bool     screenDim = false;
+
 // Top-level tool: the AP/device fox-hunt, the probe-request sniffer, or the
 // associated-client list for a chosen AP. PWR cycles HUNT<->PROBES; hold-B on
 // an AP in the picker drills into that AP's CLIENTS. Both are orthogonal to the
@@ -64,12 +72,42 @@ static uint16_t heat(int rssi, bool live) {
   return rssi >= -60 ? C_MINT : rssi >= -75 ? C_AMBER : C_PINK;
 }
 
+// Battery % tag, top-right of a header. Skipped if the board has no gauge.
+// Turns pink under 15% so you see the runway on every screen.
+static void battTag() {
+  int lvl = M5.Power.getBatteryLevel();
+  if (lvl < 0) return;
+  auto &d = M5.Display;
+  char b[8]; snprintf(b, sizeof(b), "%d%%", lvl);
+  d.setTextSize(1);
+  d.setTextColor(lvl <= 15 ? C_PINK : C_DIM, C_BG);
+  int w = d.textWidth(b);
+  d.setCursor(SCRW - w - 3, 2); d.print(b);
+}
+
+// Tiny 4-bar signal glyph (phone-style) — a persistent S-meter on every list row.
+static void drawBars(int x, int yBottom, int rssi, uint16_t lit, uint16_t off) {
+  auto &d = M5.Display;
+  int n = rssi >= -55 ? 4 : rssi >= -67 ? 3 : rssi >= -78 ? 2 : rssi >= -88 ? 1 : 0;
+  for (int b = 0; b < 4; b++) {
+    int h = 2 + b * 2;                        // 2,4,6,8 px
+    d.fillRect(x + b * 3, yBottom - h, 2, h, b < n ? lit : off);
+  }
+}
+
+// Any button press wakes the screen back to full brightness.
+static void wakeScreen() {
+  lastInput = millis();
+  if (screenDim) { M5.Display.setBrightness(BRI_FULL); screenDim = false; }
+}
+
 static void drawPicker() {
   auto &d = M5.Display;
   d.fillScreen(C_BG);
   d.setTextSize(1);
   d.setTextColor(C_VIOLET, C_BG);
   d.setCursor(4, 2); d.print("Wisp  pick a target");
+  battTag();
   d.setTextColor(C_DIM, C_BG);
   d.setCursor(4, SCRH - 9); d.print("A next B hunt Bhold clients PWR probe");
   if (apCount == 0) {
@@ -91,6 +129,7 @@ static void drawPicker() {
     d.setTextColor(col, on ? C_SEL : C_BG);
     char r[6]; snprintf(r, sizeof(r), "%d", a.rssi);
     int w = d.textWidth(r);
+    drawBars(SCRW - w - 17, y + 9, a.rssi, col, on ? C_DIM : C_RING);
     d.setCursor(SCRW - w - 4, y); d.print(r);
   }
 }
@@ -105,6 +144,7 @@ static void drawProbes() {
   d.setTextColor(C_VIOLET, C_BG);
   d.setCursor(4, 2);
   d.printf("Wisp probes  ch%-2d  %d dev", hopCh, probeCount);
+  battTag();
   d.setTextColor(C_DIM, C_BG);
   d.setCursor(4, SCRH - 9); d.print("A next  B lock  holdA clr  PWR hunt");
   if (probeCount == 0) {
@@ -127,6 +167,7 @@ static void drawProbes() {
     d.setTextColor(col, on ? C_SEL : C_BG);
     char r[6]; snprintf(r, sizeof(r), "%d", pr.rssi);
     int w = d.textWidth(r);
+    drawBars(SCRW - w - 17, y + 9, pr.rssi, col, on ? C_DIM : C_RING);
     d.setCursor(SCRW - w - 4, y); d.print(r);
   }
 }
@@ -140,6 +181,7 @@ static void drawClients() {
   d.setTextColor(C_VIOLET, C_BG);
   d.setCursor(4, 2);
   d.printf("%.10s ch%-2d  %d sta", clientApName[0] ? clientApName : "AP", clientCh, clientCount);
+  battTag();
   d.setTextColor(C_DIM, C_BG);
   d.setCursor(4, SCRH - 9); d.print("A next  B hunt  holdA back");
   if (clientCount == 0) {
@@ -162,6 +204,7 @@ static void drawClients() {
     d.setTextColor(col, on ? C_SEL : C_BG);
     char r[6]; snprintf(r, sizeof(r), "%d", c.rssi);
     int w = d.textWidth(r);
+    drawBars(SCRW - w - 17, y + 9, c.rssi, col, on ? C_DIM : C_RING);
     d.setCursor(SCRW - w - 4, y); d.print(r);
   }
 }
@@ -253,6 +296,9 @@ void setup() {
   M5.Display.setRotation(1);
   SCRW = M5.Display.width();
   SCRH = M5.Display.height();
+  setCpuFrequencyMhz(160);          // WiFi-safe, ~half the core draw of 240
+  M5.Display.setBrightness(BRI_FULL);
+  lastInput = millis();
 #ifdef WISP_S3
   M5.Speaker.setVolume(200);  // S3 stick: crank the real speaker
 #else
@@ -265,6 +311,15 @@ void setup() {
 
 void loop() {
   M5.update();
+
+  // Screen power: wake on any button; auto-dim the browse screens after 30 s idle
+  // (never the hunt meter — full brightness while you're actively walking it down).
+  if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnPWR.wasPressed()) wakeScreen();
+  if (mode == LOCKED) {
+    if (screenDim) { M5.Display.setBrightness(BRI_FULL); screenDim = false; }
+  } else if (!screenDim && millis() - lastInput > 30000) {
+    M5.Display.setBrightness(BRI_DIM); screenDim = true;
+  }
 
   // PWR cycles the top-level tool: HUNT <-> PROBES. From CLIENTS it backs out to
   // the HUNT picker. Tool-aware so it stops the right capture before switching.
