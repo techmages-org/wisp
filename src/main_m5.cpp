@@ -79,7 +79,7 @@ static void battTag() {
   if (lvl < 0) return;
   auto &d = M5.Display;
   char b[8]; snprintf(b, sizeof(b), "%d%%", lvl);
-  d.setTextSize(1);
+  d.setTextSize(2);
   d.setTextColor(lvl <= 15 ? C_PINK : C_DIM, C_BG);
   int w = d.textWidth(b);
   d.setCursor(SCRW - w - 3, 2); d.print(b);
@@ -101,36 +101,79 @@ static void wakeScreen() {
   if (screenDim) { M5.Display.setBrightness(BRI_FULL); screenDim = false; }
 }
 
+// Marquee: the selected row's name ping-pong scrolls when it's wider than its
+// cell, so a long Wi-Fi name can be read end to end. marqueeOff advances on a
+// timer in loop(); it resets to 0 whenever the selection changes.
+static int marqueeOff = 0;
+static void drawScrollName(int x, int y, int cw, const char* name, uint16_t fg, uint16_t bg) {
+  auto &d = M5.Display;
+  d.setClipRect(x, y - 2, cw, 19);
+  d.fillRect(x, y - 2, cw, 19, bg);
+  d.setTextColor(fg, bg);
+  int tw = d.textWidth(name);
+  if (tw <= cw) { d.setCursor(x, y); d.print(name); }
+  else {
+    int span = tw - cw + 14;
+    int off = marqueeOff % (span * 2);
+    if (off > span) off = span * 2 - off;   // ping-pong: out, then back
+    d.setCursor(x - off, y); d.print(name);
+  }
+  d.clearClipRect();
+}
+
+// One size-2 list row: highlight bar, rssi (right) + S-meter bars, marker, and a
+// name cell (scrolls when selected & too long, otherwise clipped). Assumes the
+// caller has already set textSize(2).
+static int selY = -1;   // screen-y of the selected row, for the marquee repaint
+static void drawRow(int y, bool on, const char* name, int rssi) {
+  auto &d = M5.Display;
+  uint16_t col = rssi >= -60 ? C_MINT : rssi >= -75 ? C_AMBER : C_PINK;
+  uint16_t bg = on ? C_SEL : C_BG;
+  if (on) d.fillRect(0, y - 2, SCRW, 19, C_SEL);
+  char r[6]; snprintf(r, sizeof(r), "%d", rssi);
+  int w = d.textWidth(r);
+  int barsX = SCRW - w - 18;
+  d.setTextColor(col, bg);
+  d.setCursor(SCRW - w - 4, y); d.print(r);
+  drawBars(barsX, y + 13, rssi, col, on ? C_DIM : C_RING);
+  d.setTextColor(on ? C_TEXT : C_DIM, bg);
+  d.setCursor(2, y); d.print(on ? ">" : " ");
+  int nx = 16, nw = barsX - nx - 4; if (nw < 12) nw = 12;
+  if (on) drawScrollName(nx, y, nw, name, C_TEXT, C_SEL);
+  else {
+    d.setClipRect(nx, y - 2, nw, 19);
+    d.setTextColor(C_DIM, C_BG);
+    d.setCursor(nx, y); d.print(name);
+    d.clearClipRect();
+  }
+}
+
 static void drawPicker() {
   auto &d = M5.Display;
   d.fillScreen(C_BG);
-  d.setTextSize(1);
+  d.setTextSize(2);
   d.setTextColor(C_VIOLET, C_BG);
-  d.setCursor(4, 2); d.print("Wisp  pick a target");
+  d.setCursor(4, 2); d.print("Pick AP");
   battTag();
+  d.setTextSize(1);
   d.setTextColor(C_DIM, C_BG);
-  d.setCursor(4, SCRH - 9); d.print("A next B hunt Bhold clients PWR probe");
+  d.setCursor(4, SCRH - 9); d.print("A next  B hunt  Bhold clients  PWR probe");
   if (apCount == 0) {
-    d.setTextColor(C_AMBER, C_BG);
-    d.setCursor(4, 60); d.print("no APs - hold A to rescan");
+    d.setTextSize(2); d.setTextColor(C_AMBER, C_BG);
+    d.setCursor(6, 48); d.print("no APs");
+    d.setCursor(6, 72); d.print("holdA scan");
     return;
   }
-  const int rows = 9, top = 15, rh = 12;
+  selY = -1;
+  const int top = 22, rh = 19;
+  int rows = (SCRH - top - 12) / rh; if (rows < 1) rows = 1;
   int start = constrain(sel - rows / 2, 0, max(0, apCount - rows));
+  d.setTextSize(2);
   for (int i = 0; i < rows && start + i < apCount; i++) {
     int idx = start + i, y = top + i * rh;
     bool on = (idx == sel);
-    AP &a = aps[idx];
-    uint16_t col = a.rssi >= -60 ? C_MINT : a.rssi >= -75 ? C_AMBER : C_PINK;
-    if (on) { d.fillRect(0, y - 1, SCRW, rh, C_SEL); d.setTextColor(C_TEXT, C_SEL); }
-    else d.setTextColor(C_DIM, C_BG);
-    d.setCursor(2, y);
-    d.printf("%c%-14.14s c%-2d", on ? '>' : ' ', a.ssid, a.channel);
-    d.setTextColor(col, on ? C_SEL : C_BG);
-    char r[6]; snprintf(r, sizeof(r), "%d", a.rssi);
-    int w = d.textWidth(r);
-    drawBars(SCRW - w - 17, y + 9, a.rssi, col, on ? C_DIM : C_RING);
-    d.setCursor(SCRW - w - 4, y); d.print(r);
+    if (on) selY = y;
+    drawRow(y, on, aps[idx].ssid, aps[idx].rssi);
   }
 }
 
@@ -140,35 +183,32 @@ static void drawPicker() {
 static void drawProbes() {
   auto &d = M5.Display;
   d.fillScreen(C_BG);
-  d.setTextSize(1);
+  d.setTextSize(2);
   d.setTextColor(C_VIOLET, C_BG);
-  d.setCursor(4, 2);
-  d.printf("Wisp probes  ch%-2d  %d dev", hopCh, probeCount);
+  d.setCursor(4, 2); d.printf("Probes %d", probeCount);
   battTag();
+  d.setTextSize(1);
   d.setTextColor(C_DIM, C_BG);
   d.setCursor(4, SCRH - 9); d.print("A next  B lock  holdA clr  PWR hunt");
   if (probeCount == 0) {
-    d.setTextColor(C_AMBER, C_BG);
-    d.setCursor(4, 60); d.print("listening for probe requests...");
+    d.setTextSize(2); d.setTextColor(C_AMBER, C_BG);
+    d.setCursor(6, 48); d.print("listening");
+    d.setCursor(6, 72); d.printf("ch %d ...", hopCh);
+    selY = -1;
     return;
   }
-  const int rows = 9, top = 15, rh = 12;
+  selY = -1;
+  const int top = 22, rh = 19;
+  int rows = (SCRH - top - 12) / rh; if (rows < 1) rows = 1;
   int start = constrain(probeSel - rows / 2, 0, max(0, probeCount - rows));
+  d.setTextSize(2);
   for (int i = 0; i < rows && start + i < probeCount; i++) {
     int idx = start + i, y = top + i * rh;
     bool on = (idx == probeSel);
+    if (on) selY = y;
     Probe &pr = probes[idx];
-    uint16_t col = pr.rssi >= -60 ? C_MINT : pr.rssi >= -75 ? C_AMBER : C_PINK;
-    if (on) { d.fillRect(0, y - 1, SCRW, rh, C_SEL); d.setTextColor(C_TEXT, C_SEL); }
-    else d.setTextColor(C_DIM, C_BG);
-    d.setCursor(2, y);
-    d.printf("%c%02X:%02X:%02X %-11.11s", on ? '>' : ' ',
-             pr.mac[3], pr.mac[4], pr.mac[5], pr.ssid);
-    d.setTextColor(col, on ? C_SEL : C_BG);
-    char r[6]; snprintf(r, sizeof(r), "%d", pr.rssi);
-    int w = d.textWidth(r);
-    drawBars(SCRW - w - 17, y + 9, pr.rssi, col, on ? C_DIM : C_RING);
-    d.setCursor(SCRW - w - 4, y); d.print(r);
+    char nm[40]; snprintf(nm, sizeof(nm), "%02X%02X %s", pr.mac[4], pr.mac[5], pr.ssid);
+    drawRow(y, on, nm, pr.rssi);
   }
 }
 
@@ -177,36 +217,60 @@ static void drawProbes() {
 static void drawClients() {
   auto &d = M5.Display;
   d.fillScreen(C_BG);
-  d.setTextSize(1);
+  d.setTextSize(2);
   d.setTextColor(C_VIOLET, C_BG);
-  d.setCursor(4, 2);
-  d.printf("%.10s ch%-2d  %d sta", clientApName[0] ? clientApName : "AP", clientCh, clientCount);
+  d.setCursor(4, 2); d.printf("%.6s %d", clientApName[0] ? clientApName : "AP", clientCount);
   battTag();
+  d.setTextSize(1);
   d.setTextColor(C_DIM, C_BG);
   d.setCursor(4, SCRH - 9); d.print("A next  B hunt  holdA back");
   if (clientCount == 0) {
-    d.setTextColor(C_AMBER, C_BG);
-    d.setCursor(4, 60); d.print("waiting for client traffic...");
+    d.setTextSize(2); d.setTextColor(C_AMBER, C_BG);
+    d.setCursor(6, 48); d.print("waiting");
+    d.setCursor(6, 72); d.print("traffic");
+    selY = -1;
     return;
   }
-  const int rows = 9, top = 15, rh = 12;
+  selY = -1;
+  const int top = 22, rh = 19;
+  int rows = (SCRH - top - 12) / rh; if (rows < 1) rows = 1;
   int start = constrain(clientSel - rows / 2, 0, max(0, clientCount - rows));
+  d.setTextSize(2);
   for (int i = 0; i < rows && start + i < clientCount; i++) {
     int idx = start + i, y = top + i * rh;
     bool on = (idx == clientSel);
+    if (on) selY = y;
     Sta &c = clients[idx];
-    uint16_t col = c.rssi >= -60 ? C_MINT : c.rssi >= -75 ? C_AMBER : C_PINK;
-    if (on) { d.fillRect(0, y - 1, SCRW, rh, C_SEL); d.setTextColor(C_TEXT, C_SEL); }
-    else d.setTextColor(C_DIM, C_BG);
-    d.setCursor(2, y);
-    d.printf("%c%02X:%02X:%02X:%02X:%02X:%02X", on ? '>' : ' ',
-             c.mac[0], c.mac[1], c.mac[2], c.mac[3], c.mac[4], c.mac[5]);
-    d.setTextColor(col, on ? C_SEL : C_BG);
-    char r[6]; snprintf(r, sizeof(r), "%d", c.rssi);
-    int w = d.textWidth(r);
-    drawBars(SCRW - w - 17, y + 9, c.rssi, col, on ? C_DIM : C_RING);
-    d.setCursor(SCRW - w - 4, y); d.print(r);
+    char nm[20]; snprintf(nm, sizeof(nm), "%02X:%02X:%02X:%02X", c.mac[2], c.mac[3], c.mac[4], c.mac[5]);
+    drawRow(y, on, nm, c.rssi);
   }
+}
+
+// The selected entry's display name + rssi for the active list — used by the
+// marquee to repaint just that one row between full redraws.
+static void selName(char* out, int n) {
+  if (tool == T_PROBES && probeCount) {
+    Probe &p = probes[probeSel];
+    snprintf(out, n, "%02X%02X %s", p.mac[4], p.mac[5], p.ssid);
+  } else if (tool == T_CLIENTS && clientCount) {
+    Sta &c = clients[clientSel];
+    snprintf(out, n, "%02X:%02X:%02X:%02X", c.mac[2], c.mac[3], c.mac[4], c.mac[5]);
+  } else if (tool == T_HUNT && apCount) {
+    snprintf(out, n, "%s", aps[sel].ssid);
+  } else { out[0] = 0; }
+}
+static int selRssi() {
+  if (tool == T_PROBES && probeCount) return probes[probeSel].rssi;
+  if (tool == T_CLIENTS && clientCount) return clients[clientSel].rssi;
+  if (tool == T_HUNT && apCount) return aps[sel].rssi;
+  return -127;
+}
+static void tickMarquee() {
+  if (selY < 0) return;
+  char nm[40]; selName(nm, sizeof(nm));
+  if (!nm[0]) return;
+  M5.Display.setTextSize(2);
+  drawRow(selY, true, nm, selRssi());
 }
 
 static float pingPhase = 0;
@@ -321,9 +385,17 @@ void loop() {
     M5.Display.setBrightness(BRI_DIM); screenDim = true;
   }
 
+  // Marquee: scroll the selected long name on the list screens (not the meter).
+  if (mode != LOCKED) {
+    static uint32_t lastMarq = 0;
+    uint32_t nowm = millis();
+    if (nowm - lastMarq > 90) { marqueeOff += 5; lastMarq = nowm; tickMarquee(); }
+  }
+
   // PWR cycles the top-level tool: HUNT <-> PROBES. From CLIENTS it backs out to
   // the HUNT picker. Tool-aware so it stops the right capture before switching.
   if (M5.BtnPWR.wasClicked()) {
+    marqueeOff = 0;
     if (tool == T_HUNT) {
       tool = T_PROBES; startProbes(); probeSel = 0; lastHop = millis(); drawProbes();
     } else if (tool == T_PROBES) {
@@ -337,8 +409,8 @@ void loop() {
   if (tool == T_PROBES) {
     uint32_t now = millis();
     if (now - lastHop > 250) { hopChannel(); lastHop = now; }
-    if (M5.BtnA.wasClicked() && probeCount) probeSel = (probeSel + 1) % probeCount;
-    if (M5.BtnA.wasHold())    { probeCount = 0; probeSel = 0; }
+    if (M5.BtnA.wasClicked() && probeCount) { probeSel = (probeSel + 1) % probeCount; marqueeOff = 0; }
+    if (M5.BtnA.wasHold())    { probeCount = 0; probeSel = 0; marqueeOff = 0; }
     if (M5.BtnB.wasClicked() && probeCount > 0) {
       lockProbe(probeSel);      // -> mode == LOCKED on the chosen device
       tool = T_HUNT;
@@ -354,8 +426,8 @@ void loop() {
 
   if (tool == T_CLIENTS) {
     uint32_t now = millis();
-    if (M5.BtnA.wasClicked() && clientCount) clientSel = (clientSel + 1) % clientCount;
-    if (M5.BtnA.wasHold())    { stopClients(); tool = T_HUNT; drawPicker(); return; }
+    if (M5.BtnA.wasClicked() && clientCount) { clientSel = (clientSel + 1) % clientCount; marqueeOff = 0; }
+    if (M5.BtnA.wasHold())    { stopClients(); tool = T_HUNT; marqueeOff = 0; drawPicker(); return; }
     if (M5.BtnB.wasClicked() && clientCount > 0) {
       lockClient(clientSel);    // -> mode == LOCKED on the chosen station
       tool = T_HUNT;
@@ -370,13 +442,13 @@ void loop() {
   }
 
   if (mode == PICKING) {
-    if (M5.BtnA.wasClicked()) { sel = (sel + 1) % max(1, apCount); drawPicker(); }
-    if (M5.BtnA.wasHold())    { doScan(); drawPicker(); }
+    if (M5.BtnA.wasClicked()) { sel = (sel + 1) % max(1, apCount); marqueeOff = 0; drawPicker(); }
+    if (M5.BtnA.wasHold())    { doScan(); marqueeOff = 0; drawPicker(); }
     if (M5.BtnB.wasHold() && apCount > 0) {   // drill into this AP's clients
       strncpy(clientApName, aps[sel].ssid, sizeof(clientApName) - 1);
       clientApName[sizeof(clientApName) - 1] = 0;
       startClients(aps[sel].bssid, aps[sel].channel);
-      tool = T_CLIENTS; clientSel = 0; drawClients();
+      tool = T_CLIENTS; clientSel = 0; marqueeOff = 0; drawClients();
       return;
     }
     if (M5.BtnB.wasClicked() && apCount > 0) { lockSelection(); lastFrame = 0; drawMeter(-127, false); }
